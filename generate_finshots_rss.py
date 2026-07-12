@@ -1,72 +1,77 @@
-import feedparser
+import requests
 from bs4 import BeautifulSoup
 from feedgen.feed import FeedGenerator
-import requests
-from datetime import datetime
+from urllib.parse import urljoin
 
-SOURCE_FEED = "https://finshots.in/archive/rss.xml"
-OUTPUT_FILE = "finshots.xml"
+BASE = "https://finshots.in"
+LATEST = "https://finshots.in/latest/"
+OUTPUT = "finshots.xml"
 
+headers = {
+    "User-Agent": "Mozilla/5.0"
+}
 
-def clean_html(html):
-    soup = BeautifulSoup(html or "", "html.parser")
-    return soup.get_text(separator="\n").strip()
+r = requests.get(LATEST, headers=headers, timeout=30)
+r.raise_for_status()
 
-
-def fetch_article_image(url):
-    try:
-        r = requests.get(url, timeout=15)
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        meta = (
-            soup.find("meta", property="og:image")
-            or soup.find("meta", attrs={"name": "twitter:image"})
-        )
-
-        if meta:
-            return meta.get("content")
-
-    except Exception:
-        pass
-
-    return None
-
-
-feed = feedparser.parse(SOURCE_FEED)
-print("Entries:", len(feed.entries))
-print(feed.bozo)
+soup = BeautifulSoup(r.text, "html.parser")
 
 fg = FeedGenerator()
 fg.title("Finshots")
-fg.link(href="https://finshots.in")
-fg.description("Automatically generated Finshots RSS feed")
+fg.link(href=BASE)
+fg.description("Latest Finshots articles")
 fg.language("en")
 
-for item in feed.entries:
-    fe = fg.add_entry()
+seen = set()
 
-    fe.id(item.link)
-    fe.title(item.title)
-    fe.link(href=item.link)
+for a in soup.find_all("a", href=True):
 
-    if hasattr(item, "published_parsed") and item.published_parsed:
-        fe.pubDate(datetime(*item.published_parsed[:6]))
+    href = a["href"]
 
-    summary = clean_html(getattr(item, "summary", ""))
+    if "/archive/" not in href:
+        continue
 
-    image = fetch_article_image(item.link)
+    if href in seen:
+        continue
 
-    if image:
-        html = f"""
-        <p><img src="{image}"></p>
-        <p>{summary}</p>
-        """
-    else:
-        html = f"<p>{summary}</p>"
+    seen.add(href)
 
-    fe.content(html, type="CDATA")
-    fe.description(summary)
+    title = a.get_text(" ", strip=True)
 
-fg.rss_file(OUTPUT_FILE, pretty=True)
+    if len(title) < 10:
+        continue
 
-print("Generated", OUTPUT_FILE)
+    url = urljoin(BASE, href)
+
+    try:
+        article = requests.get(url, headers=headers, timeout=30)
+        article.raise_for_status()
+
+        art = BeautifulSoup(article.text, "html.parser")
+
+        meta_desc = art.find("meta", attrs={"name": "description"})
+        desc = meta_desc["content"] if meta_desc else ""
+
+        og = art.find("meta", property="og:image")
+        image = og["content"] if og else ""
+
+        entry = fg.add_entry()
+
+        entry.id(url)
+        entry.title(title)
+        entry.link(href=url)
+        entry.description(desc)
+
+        html = desc
+
+        if image:
+            html = f'<img src="{image}"><br><br>{desc}'
+
+        entry.content(html, type="html")
+
+    except Exception as e:
+        print(e)
+
+fg.rss_file(OUTPUT)
+
+print("Done!")
