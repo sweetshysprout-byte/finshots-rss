@@ -1,0 +1,1 @@
+# finshots-rss
