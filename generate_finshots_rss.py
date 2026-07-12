@@ -33,6 +33,8 @@ def fetch_article_image(url):
 
 
 feed = feedparser.parse(SOURCE_FEED)
+print("Entries:", len(feed.entries))
+print(feed.bozo)
 
 fg = FeedGenerator()
 fg.title("Finshots")
